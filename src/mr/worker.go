@@ -4,7 +4,14 @@ import "fmt"
 import "log"
 import "net/rpc"
 import "hash/fnv"
-
+import (
+	"encoding/json"
+	"io/ioutil"
+	"os"
+	"sort"
+	"strconv"
+	"time"
+)
 
 //
 // Map functions return a slice of KeyValue.
@@ -24,7 +31,6 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-
 //
 // main/mrworker.go calls this function.
 //
@@ -34,8 +40,84 @@ func Worker(mapf func(string, string) []KeyValue,
 	// Your worker implementation here.
 
 	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
+	n_reduce := get_metadata()
 
+	for {
+
+		reply := TaskReply{}
+		ok := call("Coordinator.GetTask", 0, &reply)
+		if ok {
+			log.Printf("Got task %v", reply)
+			if reply.TaskType == "map" {
+				do_map_task(mapf, reply.Data, reply.TaskID, n_reduce)
+			}
+		}
+
+		time.Sleep(time.Second)
+	}
+
+}
+
+func get_metadata() (n_reduce int) {
+	reply := MetadataReply{}
+
+	// send the RPC request, wait for the reply.
+	// the "Coordinator.Example" tells the
+	// receiving server that we'd like to call
+	// the Example() method of struct Coordinator.
+	ok := call("Coordinator.GetMetadata", 0, &reply)
+	if ok {
+		// reply.Y should be 100.
+		fmt.Printf("reply %v\n", reply)
+		n_reduce = reply.NReduce
+	} else {
+		fmt.Printf("call failed!\n")
+	}
+	return
+}
+
+// for sorting by key.
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
+
+func do_map_task(mapf func(string, string) []KeyValue, input_filename string, task_id int, n_reduce int) {
+	log.Printf("Doing map task %v", input_filename)
+	file, err := os.Open(input_filename)
+	if err != nil {
+		log.Fatalf("cannot open %v", input_filename)
+	}
+	content, err := ioutil.ReadAll(file)
+	if err != nil {
+		log.Fatalf("cannot read %v", input_filename)
+	}
+	file.Close()
+	kva := mapf(input_filename, string(content))
+
+	sort.Sort(ByKey(kva)) // TODO: sort 是必要的吗?
+
+	intermediate_files := make([]*os.File, n_reduce)
+	encs := make([]*json.Encoder, n_reduce)
+	for i := 0; i < n_reduce; i++ {
+		filename := "mr-" + strconv.Itoa(task_id) + "-" + strconv.Itoa(i)
+		intermediate_files[i], err = os.Create(filename)
+		if err != nil {
+			log.Fatalf("cannot create %v", filename)
+		}
+		encs[i] = json.NewEncoder(intermediate_files[i])
+	}
+
+	for _, kv := range kva {
+		index := ihash(kv.Key) % n_reduce
+		err := encs[index].Encode(&kv)
+		if err != nil {
+			log.Println(err)
+		}
+	}
+	log.Printf("Done map task %v", input_filename)
 }
 
 //

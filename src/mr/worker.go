@@ -40,25 +40,30 @@ func Worker(mapf func(string, string) []KeyValue,
 	// Your worker implementation here.
 
 	// uncomment to send the Example RPC to the coordinator.
-	n_reduce := get_metadata()
+	n_map, n_reduce := get_metadata()
 
 	for {
-
 		reply := TaskReply{}
 		ok := call("Coordinator.GetTask", 0, &reply)
 		if ok {
 			log.Printf("Got task %v", reply)
 			if reply.TaskType == "map" {
 				do_map_task(mapf, reply.Data, reply.TaskID, n_reduce)
+			} else if reply.TaskType == "reduce" {
+				do_reduce_task(reducef, reply.TaskID, n_map)
+			} else if reply.TaskType == "wait" {
+				time.Sleep(time.Second)
+			} else {
+				log.Printf("Receiving task type %v, exiting", reply.TaskType)
+				os.Exit(0)
 			}
 		}
 
-		time.Sleep(time.Second)
 	}
 
 }
 
-func get_metadata() (n_reduce int) {
+func get_metadata() (n_map int, n_reduce int) {
 	reply := MetadataReply{}
 
 	// send the RPC request, wait for the reply.
@@ -70,6 +75,7 @@ func get_metadata() (n_reduce int) {
 		// reply.Y should be 100.
 		fmt.Printf("reply %v\n", reply)
 		n_reduce = reply.NReduce
+		n_map = reply.NMap
 	} else {
 		fmt.Printf("call failed!\n")
 	}
@@ -117,7 +123,71 @@ func do_map_task(mapf func(string, string) []KeyValue, input_filename string, ta
 			log.Println(err)
 		}
 	}
-	log.Printf("Done map task %v", input_filename)
+	args := CompleteTaskArgs{TaskType: "map", TaskID: task_id, Data: input_filename}
+	reply := 0
+	ok := call("Coordinator.CompleteTask", &args, &reply)
+	if ok {
+		log.Printf("Done map task %v", input_filename)
+	} else {
+		log.Printf("ERROR")
+	}
+}
+
+func do_reduce_task(reducef func(string, []string) string, task_id, n_map int) {
+	intermediate := []KeyValue{}
+
+	for i := 0; i < n_map; i++ {
+		filename := "mr-" + strconv.Itoa(i) + "-" + strconv.Itoa(task_id)
+		file, err := os.Open(filename)
+		if err != nil {
+			log.Fatalf("cannot open %v", filename)
+		}
+		dec := json.NewDecoder(file)
+
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+			intermediate = append(intermediate, kv)
+		}
+	}
+
+	oname := "mr-out-" + strconv.Itoa(task_id)
+	ofile, _ := os.Create(oname)
+
+	//
+	// call Reduce on each distinct key in intermediate[],
+	// and print the result to mr-out-0.
+	//
+	i := 0
+	for i < len(intermediate) {
+		j := i + 1
+		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, intermediate[k].Value)
+		}
+		output := reducef(intermediate[i].Key, values)
+
+		// this is the correct format for each line of Reduce output.
+		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+
+		i = j
+	}
+
+	ofile.Close()
+
+	args := CompleteTaskArgs{TaskType: "reduce", TaskID: task_id}
+	reply := 0
+	ok := call("Coordinator.CompleteTask", &args, &reply)
+	if ok {
+		log.Printf("Done reduce task %v", task_id)
+	} else {
+		log.Printf("ERROR")
+	}
 }
 
 //

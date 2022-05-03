@@ -1,11 +1,15 @@
 package mr
 
-import "log"
-import "net"
-import "os"
-import "net/rpc"
-import "net/http"
-import "time"
+import (
+	"errors"
+	"log"
+	"net"
+	"net/http"
+	"net/rpc"
+	"os"
+	"sync"
+	"time"
+)
 
 // task status
 const (
@@ -21,10 +25,11 @@ type TaskStatus struct {
 }
 
 type Coordinator struct {
-	pending_map_tasks    int
-	map_tasks            map[string]*TaskStatus
-	pending_reduce_tasks int
-	reduce_tasks         map[int]*TaskStatus
+	mu                  sync.Mutex // Only one goroutine can manipulate this data structure
+	undone_map_tasks    int
+	map_tasks           map[string]*TaskStatus
+	undone_reduce_tasks int
+	reduce_tasks        map[int]*TaskStatus
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -48,8 +53,9 @@ func (c *Coordinator) GetMetadata(args int, reply *MetadataReply) error {
 }
 
 func (c *Coordinator) GetTask(args int, reply *TaskReply) error {
-	if c.pending_map_tasks != 0 {
-		// TODO: mutex
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.undone_map_tasks != 0 {
 		for file, task := range c.map_tasks {
 			if task.status == PENDING {
 				reply.TaskType = "map"
@@ -58,22 +64,49 @@ func (c *Coordinator) GetTask(args int, reply *TaskReply) error {
 				// TODO: 为什么如果不存指针, 就需要给 map 重新赋值?
 				task.status = RUNNING
 				task.start_time = time.Now()
-				c.pending_map_tasks--
 				log.Printf("Assigned map task %v to worker UNKONWN", file)
 				// log.Println(c.map_tasks)
 				return nil
 			}
 		}
-	} else {
+		// if no more pending but some are still running
 		reply.TaskType = "wait"
 		log.Println("Waiting for map tasks to complete")
+	} else if c.undone_reduce_tasks != 0 {
+		reply.TaskType = "reduce"
+		for i, task := range c.reduce_tasks {
+			if task.status == PENDING {
+				reply.TaskID = i
+				task.status = RUNNING
+				task.start_time = time.Now()
+				log.Printf("Assigned reduce task %v to worker UNKONWN", i)
+				return nil
+			}
+		}
+		reply.TaskType = "wait"
+		log.Println("Waiting for other reduce tasks to complete")
 		return nil
 	}
+
+	// All done!
+	reply.TaskType = "exit"
+	log.Println("All tasks are done!")
 	return nil
 }
 
-func (c *Coordinator) CompleteTask(args *TaskArgs, reply *TaskReply) error {
-	return nil
+func (c *Coordinator) CompleteTask(args *CompleteTaskArgs, reply *int) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if args.TaskType == "map" {
+		c.map_tasks[args.Data].status = DONE
+		c.undone_map_tasks--
+		return nil
+	} else if args.TaskType == "reduce" {
+		c.reduce_tasks[args.TaskID].status = DONE
+		c.undone_reduce_tasks--
+		return nil
+	}
+	return errors.New("THIS SHOULD NOT BE EXECUTED")
 }
 
 //
@@ -89,7 +122,7 @@ func (c *Coordinator) server() {
 	if e != nil {
 		log.Fatal("listen error:", e)
 	}
-	go http.Serve(l, nil)
+	go http.Serve(l, nil) // 这能够同时处理多个请求吗
 }
 
 //
@@ -100,6 +133,11 @@ func (c *Coordinator) Done() bool {
 	ret := false
 
 	// Your code here.
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.undone_map_tasks == 0 && c.undone_reduce_tasks == 0 {
+		ret = true
+	}
 
 	return ret
 }
@@ -114,12 +152,12 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		map_tasks:    make(map[string]*TaskStatus),
 		reduce_tasks: make(map[int]*TaskStatus),
 	}
-	c.pending_map_tasks = len(files)
+	c.undone_map_tasks = len(files)
 	for index, file := range files {
 		c.map_tasks[file] = &TaskStatus{status: PENDING, id: index}
 	}
 
-	c.pending_reduce_tasks = nReduce
+	c.undone_reduce_tasks = nReduce
 	for i := 0; i < nReduce; i++ {
 		c.reduce_tasks[i] = &TaskStatus{status: PENDING, id: i}
 	}

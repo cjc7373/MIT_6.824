@@ -32,6 +32,8 @@ type TaskReply struct {
 	Data     string
 }
 
+type CompleteTaskArgs TaskReply
+
 type MetadataReply struct {
 	NReduce int // the number of reduce tasks
 	NMap    int // map task number

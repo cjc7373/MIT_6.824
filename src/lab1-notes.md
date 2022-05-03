@@ -14,3 +14,6 @@ worker 需要一些 metadata, 比如 map 和 reduce 节点的数量
 需要知道 worker 的状态嘛? 还是知道 task 的状态就够了?
 
 map 之后的排序/写入对应的文件需要 mapreduce lib 来处理?
+
+## Some commands
+- go build -race -buildmode=plugin ../mrapps/wc.go && go run -race mrworker.go wc.so

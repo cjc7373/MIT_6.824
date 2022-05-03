@@ -40,13 +40,13 @@ type Coordinator struct {
 // the RPC argument and reply types are defined in rpc.go.
 //
 func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
-	log.Printf("Received RPC: Example, args: %v", args)
+	DPrintf("Received RPC: Example, args: %v", args)
 	reply.Y = args.X + 1
 	return nil
 }
 
 func (c *Coordinator) GetMetadata(args int, reply *MetadataReply) error {
-	log.Printf("Received RPC: GetMetadata, args: %v", args)
+	DPrintf("Received RPC: GetMetadata, args: %v", args)
 	reply.NMap = len(c.map_tasks)
 	reply.NReduce = len(c.reduce_tasks)
 	return nil
@@ -64,14 +64,15 @@ func (c *Coordinator) GetTask(args int, reply *TaskReply) error {
 				// TODO: 为什么如果不存指针, 就需要给 map 重新赋值?
 				task.status = RUNNING
 				task.start_time = time.Now()
-				log.Printf("Assigned map task %v to worker UNKONWN", file)
-				// log.Println(c.map_tasks)
+				DPrintf("Assigned map task %v to worker %v", file, args)
+				// DPrintf(c.map_tasks)
 				return nil
 			}
 		}
 		// if no more pending but some are still running
 		reply.TaskType = "wait"
-		log.Println("Waiting for map tasks to complete")
+		DPrintf("Waiting for map tasks to complete")
+		return nil
 	} else if c.undone_reduce_tasks != 0 {
 		reply.TaskType = "reduce"
 		for i, task := range c.reduce_tasks {
@@ -79,18 +80,19 @@ func (c *Coordinator) GetTask(args int, reply *TaskReply) error {
 				reply.TaskID = i
 				task.status = RUNNING
 				task.start_time = time.Now()
-				log.Printf("Assigned reduce task %v to worker UNKONWN", i)
+				DPrintf("Assigned reduce task %v to worker %v", i, args)
 				return nil
 			}
 		}
 		reply.TaskType = "wait"
-		log.Println("Waiting for other reduce tasks to complete")
+		DPrintf("Waiting for other reduce tasks to complete")
 		return nil
 	}
 
 	// All done!
 	reply.TaskType = "exit"
-	log.Println("All tasks are done!")
+	DPrintf("undone_map_tasks: %v undone_reduce_tasks: %v", c.undone_map_tasks, c.undone_reduce_tasks)
+	DPrintf("All tasks are done!")
 	return nil
 }
 

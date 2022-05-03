@@ -41,12 +41,13 @@ func Worker(mapf func(string, string) []KeyValue,
 
 	// uncomment to send the Example RPC to the coordinator.
 	n_map, n_reduce := get_metadata()
+	pid := os.Getpid()
 
 	for {
 		reply := TaskReply{}
-		ok := call("Coordinator.GetTask", 0, &reply)
+		ok := call("Coordinator.GetTask", pid, &reply)
 		if ok {
-			log.Printf("Got task %v", reply)
+			DPrintf("Got task %+v", reply)
 			if reply.TaskType == "map" {
 				do_map_task(mapf, reply.Data, reply.TaskID, n_reduce)
 			} else if reply.TaskType == "reduce" {
@@ -54,7 +55,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			} else if reply.TaskType == "wait" {
 				time.Sleep(time.Second)
 			} else {
-				log.Printf("Receiving task type %v, exiting", reply.TaskType)
+				DPrintf("Receiving task type %v, exiting", reply.TaskType)
 				os.Exit(0)
 			}
 		}
@@ -66,18 +67,13 @@ func Worker(mapf func(string, string) []KeyValue,
 func get_metadata() (n_map int, n_reduce int) {
 	reply := MetadataReply{}
 
-	// send the RPC request, wait for the reply.
-	// the "Coordinator.Example" tells the
-	// receiving server that we'd like to call
-	// the Example() method of struct Coordinator.
 	ok := call("Coordinator.GetMetadata", 0, &reply)
 	if ok {
-		// reply.Y should be 100.
-		fmt.Printf("reply %v\n", reply)
+		DPrintf("metadata %+v", reply)
 		n_reduce = reply.NReduce
 		n_map = reply.NMap
 	} else {
-		fmt.Printf("call failed!\n")
+		DPrintf("call failed!")
 	}
 	return
 }
@@ -91,7 +87,7 @@ func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 func do_map_task(mapf func(string, string) []KeyValue, input_filename string, task_id int, n_reduce int) {
-	log.Printf("Doing map task %v", input_filename)
+	DPrintf("Doing map task %v", input_filename)
 	file, err := os.Open(input_filename)
 	if err != nil {
 		log.Fatalf("cannot open %v", input_filename)
@@ -102,8 +98,6 @@ func do_map_task(mapf func(string, string) []KeyValue, input_filename string, ta
 	}
 	file.Close()
 	kva := mapf(input_filename, string(content))
-
-	sort.Sort(ByKey(kva)) // TODO: sort 是必要的吗?
 
 	intermediate_files := make([]*os.File, n_reduce)
 	encs := make([]*json.Encoder, n_reduce)
@@ -120,16 +114,16 @@ func do_map_task(mapf func(string, string) []KeyValue, input_filename string, ta
 		index := ihash(kv.Key) % n_reduce
 		err := encs[index].Encode(&kv)
 		if err != nil {
-			log.Println(err)
+			log.Fatal(err)
 		}
 	}
 	args := CompleteTaskArgs{TaskType: "map", TaskID: task_id, Data: input_filename}
 	reply := 0
 	ok := call("Coordinator.CompleteTask", &args, &reply)
 	if ok {
-		log.Printf("Done map task %v", input_filename)
+		DPrintf("Done map task %v", input_filename)
 	} else {
-		log.Printf("ERROR")
+		DPrintf("ERROR")
 	}
 }
 
@@ -149,9 +143,12 @@ func do_reduce_task(reducef func(string, []string) string, task_id, n_map int) {
 			if err := dec.Decode(&kv); err != nil {
 				break
 			}
+			// DPrintf("Appending %v", kv)
 			intermediate = append(intermediate, kv)
 		}
 	}
+
+	sort.Sort(ByKey(intermediate)) // TODO: sort 是必要的吗?
 
 	oname := "mr-out-" + strconv.Itoa(task_id)
 	ofile, _ := os.Create(oname)
@@ -184,9 +181,9 @@ func do_reduce_task(reducef func(string, []string) string, task_id, n_map int) {
 	reply := 0
 	ok := call("Coordinator.CompleteTask", &args, &reply)
 	if ok {
-		log.Printf("Done reduce task %v", task_id)
+		DPrintf("Done reduce task %v", task_id)
 	} else {
-		log.Printf("ERROR")
+		DPrintf("ERROR")
 	}
 }
 

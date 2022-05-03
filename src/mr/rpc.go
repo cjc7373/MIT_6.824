@@ -26,8 +26,15 @@ type ExampleReply struct {
 type TaskArgs struct {
 }
 
+const (
+	TaskMap = 1 << iota
+	TaskReduce
+	TaskWait
+	TaskExit
+)
+
 type TaskReply struct {
-	TaskType string
+	TaskType int
 	TaskID   int
 	Data     string
 }

@@ -48,13 +48,15 @@ func Worker(mapf func(string, string) []KeyValue,
 		ok := call("Coordinator.GetTask", pid, &reply)
 		if ok {
 			DPrintf("Got task %+v", reply)
-			if reply.TaskType == "map" {
+
+			switch reply.TaskType {
+			case TaskMap:
 				do_map_task(mapf, reply.Data, reply.TaskID, n_reduce)
-			} else if reply.TaskType == "reduce" {
+			case TaskReduce:
 				do_reduce_task(reducef, reply.TaskID, n_map)
-			} else if reply.TaskType == "wait" {
+			case TaskWait:
 				time.Sleep(time.Second)
-			} else {
+			case TaskExit:
 				DPrintf("Receiving task type %v, exiting", reply.TaskType)
 				os.Exit(0)
 			}
@@ -117,7 +119,7 @@ func do_map_task(mapf func(string, string) []KeyValue, input_filename string, ta
 			log.Fatal(err)
 		}
 	}
-	args := CompleteTaskArgs{TaskType: "map", TaskID: task_id, Data: input_filename}
+	args := CompleteTaskArgs{TaskType: TaskMap, TaskID: task_id, Data: input_filename}
 	reply := 0
 	ok := call("Coordinator.CompleteTask", &args, &reply)
 	if ok {
@@ -177,7 +179,7 @@ func do_reduce_task(reducef func(string, []string) string, task_id, n_map int) {
 
 	ofile.Close()
 
-	args := CompleteTaskArgs{TaskType: "reduce", TaskID: task_id}
+	args := CompleteTaskArgs{TaskType: TaskReduce, TaskID: task_id}
 	reply := 0
 	ok := call("Coordinator.CompleteTask", &args, &reply)
 	if ok {

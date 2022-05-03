@@ -7,7 +7,7 @@ import (
 )
 
 // Debugging
-const Debug = true
+const Debug = false
 
 var logger = log.New(os.Stdout, "", log.LstdFlags|log.Lshortfile)
 

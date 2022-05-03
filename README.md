@@ -10,7 +10,8 @@ Papers:
 - [ ] GFS (2003)
 
 Labs:
-- [ ] Lab 1: MapReduce
+- [x] 2022-05-03 Lab 1: MapReduce
+- [ ] Lab 2: Raft
 
 Others:
 - [x] 2022-04-30 [Online Go tutorial](http://tour.golang.org/)

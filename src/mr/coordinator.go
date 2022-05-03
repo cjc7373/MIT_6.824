@@ -58,7 +58,7 @@ func (c *Coordinator) GetTask(args int, reply *TaskReply) error {
 	if c.undone_map_tasks != 0 {
 		for file, task := range c.map_tasks {
 			if task.status == PENDING {
-				reply.TaskType = "map"
+				reply.TaskType = TaskMap
 				reply.Data = file
 				reply.TaskID = task.id
 				// TODO: 为什么如果不存指针, 就需要给 map 重新赋值?
@@ -70,11 +70,11 @@ func (c *Coordinator) GetTask(args int, reply *TaskReply) error {
 			}
 		}
 		// if no more pending but some are still running
-		reply.TaskType = "wait"
+		reply.TaskType = TaskWait
 		DPrintf("Waiting for map tasks to complete")
 		return nil
 	} else if c.undone_reduce_tasks != 0 {
-		reply.TaskType = "reduce"
+		reply.TaskType = TaskReduce
 		for i, task := range c.reduce_tasks {
 			if task.status == PENDING {
 				reply.TaskID = i
@@ -84,14 +84,14 @@ func (c *Coordinator) GetTask(args int, reply *TaskReply) error {
 				return nil
 			}
 		}
-		reply.TaskType = "wait"
+		reply.TaskType = TaskWait
 		DPrintf("Waiting for other reduce tasks to complete")
 		return nil
 	}
 
 	// All done!
-	reply.TaskType = "exit"
-	DPrintf("undone_map_tasks: %v undone_reduce_tasks: %v", c.undone_map_tasks, c.undone_reduce_tasks)
+	reply.TaskType = TaskExit
+	// DPrintf("undone_map_tasks: %v undone_reduce_tasks: %v", c.undone_map_tasks, c.undone_reduce_tasks)
 	DPrintf("All tasks are done!")
 	return nil
 }
@@ -99,16 +99,52 @@ func (c *Coordinator) GetTask(args int, reply *TaskReply) error {
 func (c *Coordinator) CompleteTask(args *CompleteTaskArgs, reply *int) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if args.TaskType == "map" {
+
+	// we simply ignore duplicated tasks
+	if args.TaskType == TaskMap {
+		if c.map_tasks[args.Data].status == DONE {
+			DPrintf("Ingoring duplicated task %v", c.map_tasks[args.Data])
+			return nil
+		}
 		c.map_tasks[args.Data].status = DONE
 		c.undone_map_tasks--
 		return nil
-	} else if args.TaskType == "reduce" {
+	} else if args.TaskType == TaskReduce {
+		if c.reduce_tasks[args.TaskID].status == DONE {
+			DPrintf("Ingoring duplicated task %v", c.reduce_tasks[args.TaskID])
+			return nil
+		}
 		c.reduce_tasks[args.TaskID].status = DONE
 		c.undone_reduce_tasks--
 		return nil
 	}
 	return errors.New("THIS SHOULD NOT BE EXECUTED")
+}
+
+func (c *Coordinator) health_check() {
+	for !c.Done() {
+		go func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+
+			now := time.Now()
+			for _, task := range c.map_tasks {
+				if task.status == RUNNING && now.Sub(task.start_time) > time.Second*10 {
+					task.status = PENDING
+					DPrintf("task %v is stuck, reset status to PENDING", task)
+				}
+			}
+
+			for _, task := range c.reduce_tasks {
+				if task.status == RUNNING && now.Sub(task.start_time) > time.Second*10 {
+					task.status = PENDING
+					DPrintf("task %v is stuck, reset status to PENDING", task)
+				}
+			}
+		}()
+
+		time.Sleep(time.Second)
+	}
 }
 
 //
@@ -164,8 +200,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		c.reduce_tasks[i] = &TaskStatus{status: PENDING, id: i}
 	}
 
-	// Your code here.
-	// TODO: status check
+	go c.health_check()
 
 	c.server()
 	return &c
